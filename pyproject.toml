@@ -1,7 +1,7 @@
 [project]
 name = "lm"
 version = "0.1.0"
-description = "Add your description here"
+description = "Language Model from Scratch"
 readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
