@@ -33,3 +33,7 @@ class RMSNorm(nn.Module):
         y = x * torch.rsqrt(var + self.epsilon)
         y = self.weight * y
         return y
+
+    @override
+    def extra_repr(self) -> str:
+        return f"dim={self.dim}, epsilon={self.epsilon}"
