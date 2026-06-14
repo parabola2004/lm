@@ -80,18 +80,18 @@ class Model(nn.Module):
         return str(self.config)
 
     def loss(
-        self, input: Tensor, mask: Tensor, target: Tensor, pad_index: int
+        self, input_ids: Tensor, mask: Tensor, target: Tensor, pad_index: int
     ) -> Tensor:
         """
         Args:
-            input (..., seq_len) dtype=int
+            input_ids (..., seq_len) dtype=int
             mask (..., seq_len) dtype=bool
             target (..., seq_len) dtype=int
         """
 
-        assert input.shape == target.shape
+        assert input_ids.shape == target.shape
 
-        logits: Tensor = self(input, mask)  # (..., seq_len, vocab_size)
+        logits: Tensor = self(input_ids, mask)  # (..., seq_len, vocab_size)
         loss = nn.functional.cross_entropy(
             logits.flatten(0, -2),
             target.flatten(0, -1).to(torch.long),

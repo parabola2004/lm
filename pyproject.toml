@@ -8,6 +8,8 @@ license = "MIT"
 dependencies = [
     "numpy>=2.4.6",
     "pydantic>=2.13.4",
+    "regex>=2026.5.9",
+    "tqdm>=4.68.2",
 ]
 
 [build-system]
@@ -42,7 +44,12 @@ explicit = true
 members = ["."]
 
 [dependency-groups]
-dev = ["ipykernel>=7.3.0", "lm", "ruff>=0.15.16"]
+dev = [
+    "ipykernel>=7.3.0",
+    "lm",
+    "pytest>=9.0.3",
+    "ruff>=0.15.16",
+]
 
 [tool.ruff.lint]
 extend-select = ["I"]

@@ -12,6 +12,7 @@ class PositionalEncoding(nn.Module):
 
     def __init__(self, max_seq_len: int, dim: int):
         super().__init__()
+        assert dim % 2 == 0, f"dim must be even, got {dim}"
         self.max_seq_len = max_seq_len
         self.dim = dim
 
