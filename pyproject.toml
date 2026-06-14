@@ -6,9 +6,11 @@ readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
 dependencies = [
+    "datasets>=5.0.0",
     "numpy>=2.4.6",
     "pydantic>=2.13.4",
     "regex>=2026.5.9",
+    "tokenizers>=0.23.1",
     "tqdm>=4.68.2",
 ]
 
