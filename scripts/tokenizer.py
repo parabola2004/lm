@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 
-from datasets import load_from_disk
+from datasets import Dataset, load_from_disk
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
 from tokenizers.normalizers import NFD
@@ -33,16 +33,34 @@ def action_init(path: str):
     print(f"Initialized tokenizer at {path}.")
 
 
-def action_train(path: str, texts_path: str):
+def action_train(path: str, texts_path: str, vocab_size: int):
     tokenizer = Tokenizer.from_file(path)
-    trainer = BpeTrainer(special_tokens=["<unk>", "<pad>", "<sot>", "<eot>"])
+    trainer = BpeTrainer(
+        vocab_size=vocab_size, special_tokens=["<unk>", "<pad>", "<sot>", "<eot>"]
+    )
     ds = load_from_disk(texts_path)
-    tokenizer.train_from_iterator((x["text"] for x in ds), trainer)
+    tokenizer.train_from_iterator((sample["text"] for sample in ds), trainer)
     tokenizer.save(path, pretty=True)
     print(f"Saved tokenizer at {path}.")
 
 
-def action_encode(path: str, text: str, *, show_id: bool = False):
+def action_encode(path: str, texts_path: str, output: str, batch_size: int = 1):
+    tokenizer = Tokenizer.from_file(path)
+    ds_texts = load_from_disk(texts_path)
+
+    def gen():
+        for i in range(0, len(ds_texts), batch_size):
+            batch = ds_texts[i : i + batch_size]["text"]
+            encoded = tokenizer.encode_batch_fast(batch)
+            for x in encoded:
+                yield {"tokens": x.ids}
+
+    ds_ids = Dataset.from_generator(gen)
+    ds_ids.save_to_disk(output)
+    print(f"Saved encoded dataset to {output}.")
+
+
+def action_demo(path: str, text: str, *, show_id: bool = False):
     tokenizer = Tokenizer.from_file(path)
     output = tokenizer.encode(text)
     if show_id:
@@ -68,12 +86,28 @@ def create_parser() -> ArgumentParser:
     train_parser = subparsers.add_parser("train", help="train tokenizer")
     train_parser.add_argument("path", help="tokenizer JSON file")
     train_parser.add_argument("texts_path", help="path to dataset directory")
+    train_parser.add_argument("vocab_size", type=int, help="vocabulary size")
 
     # encode
-    encode_parser = subparsers.add_parser("encode", help="encode text to tokens")
+    encode_parser = subparsers.add_parser(
+        "encode", help="encode dataset texts to tokens"
+    )
     encode_parser.add_argument("path", help="tokenizer JSON file")
-    encode_parser.add_argument("text", help="text to encode")
-    encode_parser.add_argument("--id", action="store_true", help="show token ids")
+    encode_parser.add_argument("texts_path", help="path to dataset directory")
+    encode_parser.add_argument("output", help="output directory for encoded dataset")
+    encode_parser.add_argument(
+        "--batch-size",
+        "-bs",
+        type=int,
+        default=1,
+        help="batch size for encoding (default: 1)",
+    )
+
+    # demo
+    demo_parser = subparsers.add_parser("demo", help="demo: encode a single text")
+    demo_parser.add_argument("path", help="tokenizer JSON file")
+    demo_parser.add_argument("text", help="text to encode")
+    demo_parser.add_argument("--id", action="store_true", help="show token ids")
 
     return parser
 
@@ -88,9 +122,13 @@ def main():
         case "init":
             action_init(args.path)
         case "train":
-            action_train(args.path, args.texts_path)
+            action_train(args.path, args.texts_path, args.vocab_size)
         case "encode":
-            action_encode(args.path, args.text, show_id=args.id)
+            action_encode(
+                args.path, args.texts_path, args.output, batch_size=args.batch_size
+            )
+        case "demo":
+            action_demo(args.path, args.text, show_id=args.id)
 
 
 if __name__ == "__main__":
