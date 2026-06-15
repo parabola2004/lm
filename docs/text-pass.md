@@ -132,21 +132,34 @@ An empty string produces no output (Python's `str.splitlines()` returns `[]` for
 
 Split each text by a literal separator or regex pattern. One text in, zero or more segments out.
 
-| Param     | Type   | Default  | Description                                   |
-| --------- | ------ | -------- | --------------------------------------------- |
-| separator | `str`  | required | Separator string or regex pattern to split on |
-| regex     | `bool` | `false`  | Treat `separator` as a regex pattern          |
-| maxsplit  | `int`  | `0`      | Maximum number of splits; `0` means unlimited |
+| Param     | Type     | Default     | Description                                                                                              |
+| --------- | -------- | ----------- | -------------------------------------------------------------------------------------------------------- |
+| separator | `str`    | required    | Separator string or regex pattern to split on                                                            |
+| regex     | `bool`   | `false`     | Treat `separator` as a regex pattern                                                                     |
+| maxsplit  | `int`    | `0`         | Maximum number of splits; `0` means unlimited                                                            |
+| behavior  | `string` | `"removed"` | What to do with the separator: `"removed"`, `"isolated"`, `"merged_with_previous"`, `"merged_with_next"` |
 
 ```json
 { "name": "split", "separator": "," }
 { "name": "split", "regex": true, "separator": "\\s+" }
 { "name": "split", "separator": "\\t", "maxsplit": 1 }
+{ "name": "split", "regex": true, "separator": "\\n = (?!=).*? = \\n", "behavior": "merged_with_next" }
 ```
 
-When `regex` is false, uses Python's `str.split` for fast literal splitting. When `regex` is true, uses `regex.split` — capturing groups in the pattern are included in the output.
+When `regex` is false, uses Python's `str.split` for fast literal splitting (for `"removed"` behavior) or `regex.split` with an escaped literal (for other behaviors). When `regex` is true, uses `regex.split`. An empty string input produces a single empty string output (`"".split(",")` → `[""]`), unlike `split_lines`.
 
-An empty string input produces a single empty string output (`"".split(",")` → `[""]`), unlike `split_lines`.
+#### Behavior modes
+
+The `behavior` field controls what happens to the matched separator:
+
+| Behavior                 | Input `a,b,c` split by `,` | How it works                               |
+| ------------------------ | -------------------------- | ------------------------------------------ |
+| `"removed"`              | `["a","b","c"]`            | Separator discarded (default)              |
+| `"isolated"`             | `["a",",","b",",","c"]`    | Separator becomes its own segment          |
+| `"merged_with_previous"` | `["a,","b,","c"]`          | Separator appended to the preceding piece  |
+| `"merged_with_next"`     | `["a",",b",",c"]`          | Separator prepended to the following piece |
+
+Common use case: splitting articles by headings while preserving the heading text. With `behavior: "merged_with_next"`, each section starts with its heading line rather than losing it.
 
 ### `join` — Join texts
 

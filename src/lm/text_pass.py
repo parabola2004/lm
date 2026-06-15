@@ -297,27 +297,64 @@ class SplitPass(TextPassModel):
     separator: str
     regex: bool = False
     maxsplit: int = 0
+    behavior: Literal[
+        "removed", "isolated", "merged_with_previous", "merged_with_next"
+    ] = "removed"
 
     @override
     def build(self, config_path):
-        pat = regex.compile(self.separator) if self.regex else None
-        return self._Instance(self.regex, pat, self.separator, self.maxsplit)
+        if self.regex:
+            pat = regex.compile(self.separator)
+        else:
+            pat = None
+
+        if self.behavior != "removed":
+            if self.regex and pat:
+                cap_pat = regex.compile(f"({self.separator})", pat.flags)
+            else:
+                cap_pat = regex.compile(f"({regex.escape(self.separator)})")
+        else:
+            cap_pat = None
+
+        return self._Instance(
+            self.regex, pat, cap_pat, self.separator, self.maxsplit, self.behavior
+        )
 
     @dataclass
     class _Instance(TextPassInstance):
         regex: bool
         pattern: Pattern | None
+        cap_pattern: Pattern | None
         separator: str
         maxsplit: int
+        behavior: str
 
         @override
         def process(self, texts):
             for text in texts:
-                if self.regex and self.pattern:
-                    yield from regex.split(self.pattern, text, maxsplit=self.maxsplit)
+                if self.behavior == "removed":
+                    if self.regex and self.pattern:
+                        yield from regex.split(
+                            self.pattern, text, maxsplit=self.maxsplit
+                        )
+                    else:
+                        ms = self.maxsplit if self.maxsplit > 0 else -1
+                        yield from text.split(self.separator, ms)
+                elif self.cap_pattern:
+                    parts = regex.split(self.cap_pattern, text, maxsplit=self.maxsplit)
+                    if self.behavior == "isolated":
+                        yield from parts
+                    elif self.behavior == "merged_with_previous":
+                        for i in range(0, len(parts) - 1, 2):
+                            yield parts[i] + parts[i + 1]
+                        if len(parts) % 2 == 1:
+                            yield parts[-1]
+                    elif self.behavior == "merged_with_next":
+                        yield parts[0]
+                        for i in range(1, len(parts) - 1, 2):
+                            yield parts[i] + parts[i + 1]
                 else:
-                    ms = self.maxsplit if self.maxsplit > 0 else -1
-                    yield from text.split(self.separator, ms)
+                    raise RuntimeError("no self.cap_pattern")
 
 
 class StripPass(TextPassModel):

@@ -113,14 +113,22 @@ class TestSplitPass:
         assert p.separator == ","
         assert p.regex is False
         assert p.maxsplit == 0
+        assert p.behavior == "removed"
 
     def test_model_validation_with_all_options(self):
         p = SplitPass.model_validate(
-            {"name": "split", "separator": r"\s+", "regex": True, "maxsplit": 3}
+            {
+                "name": "split",
+                "separator": r"\s+",
+                "regex": True,
+                "maxsplit": 3,
+                "behavior": "isolated",
+            }
         )
         assert p.separator == r"\s+"
         assert p.regex is True
         assert p.maxsplit == 3
+        assert p.behavior == "isolated"
 
     # --- plain split (str.split) ---
 
@@ -228,14 +236,140 @@ class TestSplitPass:
     def test_split_strip_filter_pipeline(self):
         """Split by double-newline, strip each piece, drop empties — article boundary pattern."""
         passes = TextPassList.model_validate(
-            {"passes": [
-                {"name": "split", "regex": True, "separator": r"\n\n+"},
-                {"name": "strip"},
-                {"name": "filter", "pattern": r"^$", "invert": True},
-            ]}
+            {
+                "passes": [
+                    {"name": "split", "regex": True, "separator": r"\n\n+"},
+                    {"name": "strip"},
+                    {"name": "filter", "pattern": r"^$", "invert": True},
+                ]
+            }
         ).passes
-        result = list(process_texts(["  = A = \n\n  text a  \n\n\n  = B = \n  text b  "], passes))
+        result = list(
+            process_texts(["  = A = \n\n  text a  \n\n\n  = B = \n  text b  "], passes)
+        )
         assert result == ["= A =", "text a", "= B = \n  text b"]
+
+    # --- behavior modes ---
+
+    def test_behavior_removed_is_default(self):
+        """Default behavior is 'removed' — same as str.split / regex.split."""
+        inst = self._build(separator=",", behavior="removed")
+        result = list(inst.process(["a,b,c"]))
+        assert result == ["a", "b", "c"]
+
+    def test_behavior_removed_regex(self):
+        inst = self._build(regex=True, separator=r"\s+", behavior="removed")
+        result = list(inst.process(["a  b\tc"]))
+        assert result == ["a", "b", "c"]
+
+    # --- isolated ---
+
+    def test_behavior_isolated_plain(self):
+        inst = self._build(separator=",", behavior="isolated")
+        result = list(inst.process(["a,b,c"]))
+        assert result == ["a", ",", "b", ",", "c"]
+
+    def test_behavior_isolated_regex(self):
+        inst = self._build(regex=True, separator=r"\s+", behavior="isolated")
+        result = list(inst.process(["a  b\tc"]))
+        assert result == ["a", "  ", "b", "\t", "c"]
+
+    def test_behavior_isolated_no_match(self):
+        inst = self._build(separator=",", behavior="isolated")
+        result = list(inst.process(["abc"]))
+        assert result == ["abc"]
+
+    def test_behavior_isolated_match_at_start(self):
+        inst = self._build(separator=",", behavior="isolated")
+        result = list(inst.process([",a,b"]))
+        assert result == ["", ",", "a", ",", "b"]
+
+    def test_behavior_isolated_match_at_end(self):
+        inst = self._build(separator=",", behavior="isolated")
+        result = list(inst.process(["a,b,"]))
+        assert result == ["a", ",", "b", ",", ""]
+
+    # --- merged_with_previous ---
+
+    def test_behavior_merged_with_previous_plain(self):
+        inst = self._build(separator=",", behavior="merged_with_previous")
+        result = list(inst.process(["a,b,c"]))
+        assert result == ["a,", "b,", "c"]
+
+    def test_behavior_merged_with_previous_regex(self):
+        inst = self._build(
+            regex=True, separator=r"\s+", behavior="merged_with_previous"
+        )
+        result = list(inst.process(["a  b\tc"]))
+        assert result == ["a  ", "b\t", "c"]
+
+    def test_behavior_merged_with_previous_no_match(self):
+        inst = self._build(separator=",", behavior="merged_with_previous")
+        result = list(inst.process(["abc"]))
+        assert result == ["abc"]
+
+    # --- merged_with_next ---
+
+    def test_behavior_merged_with_next_plain(self):
+        inst = self._build(separator=",", behavior="merged_with_next")
+        result = list(inst.process(["a,b,c"]))
+        assert result == ["a", ",b", ",c"]
+
+    def test_behavior_merged_with_next_regex(self):
+        inst = self._build(regex=True, separator=r"\s+", behavior="merged_with_next")
+        result = list(inst.process(["a  b\tc"]))
+        assert result == ["a", "  b", "\tc"]
+
+    def test_behavior_merged_with_next_no_match(self):
+        inst = self._build(separator=",", behavior="merged_with_next")
+        result = list(inst.process(["abc"]))
+        assert result == ["abc"]
+
+    # --- behavior + maxsplit ---
+
+    def test_behavior_isolated_with_maxsplit(self):
+        inst = self._build(separator=",", behavior="isolated", maxsplit=2)
+        result = list(inst.process(["a,b,c,d"]))
+        assert result == ["a", ",", "b", ",", "c,d"]
+
+    def test_behavior_merged_with_previous_with_maxsplit(self):
+        inst = self._build(separator=",", behavior="merged_with_previous", maxsplit=2)
+        result = list(inst.process(["a,b,c,d"]))
+        assert result == ["a,", "b,", "c,d"]
+
+    def test_behavior_merged_with_next_with_maxsplit(self):
+        inst = self._build(separator=",", behavior="merged_with_next", maxsplit=2)
+        result = list(inst.process(["a,b,c,d"]))
+        assert result == ["a", ",b", ",c,d"]
+
+    # --- end-to-end behavior via process_texts ---
+
+    def test_end_to_end_behavior_merged_with_next(self):
+        passes = TextPassList.model_validate(
+            {
+                "passes": [
+                    {"name": "split", "separator": ",", "behavior": "merged_with_next"}
+                ]
+            }
+        ).passes
+        result = list(process_texts(["a,b,c"], passes))
+        assert result == ["a", ",b", ",c"]
+
+    def test_end_to_end_behavior_isolated_regex(self):
+        passes = TextPassList.model_validate(
+            {
+                "passes": [
+                    {
+                        "name": "split",
+                        "regex": True,
+                        "separator": r"[,;]",
+                        "behavior": "isolated",
+                    }
+                ]
+            }
+        ).passes
+        result = list(process_texts(["a,b;c"], passes))
+        assert result == ["a", ",", "b", ";", "c"]
 
 
 class TestJoinPass:
@@ -324,9 +458,7 @@ class TestReplacePass:
         return ReplacePass.model_validate({**defaults, **kwargs}).build(".")
 
     def test_model_validation(self):
-        p = ReplacePass.model_validate(
-            {"name": "replace", "old": "foo", "new": "bar"}
-        )
+        p = ReplacePass.model_validate({"name": "replace", "old": "foo", "new": "bar"})
         assert p.name == "replace"
         assert p.old == "foo"
         assert p.new == "bar"
@@ -414,7 +546,16 @@ class TestReplacePass:
 
     def test_end_to_end_replace_regex(self):
         passes = TextPassList.model_validate(
-            {"passes": [{"name": "replace", "regex": True, "old": r"\b\w{3}\b", "new": "???"}]}
+            {
+                "passes": [
+                    {
+                        "name": "replace",
+                        "regex": True,
+                        "old": r"\b\w{3}\b",
+                        "new": "???",
+                    }
+                ]
+            }
         ).passes
         result = list(process_texts(["abc def ghij"], passes))
         assert result == ["??? ??? ghij"]
@@ -514,23 +655,27 @@ class TestForEachPass:
         """for_each containing another for_each — each level isolates its input."""
         # Outer: for each text → inner: for each text, strip → join with comma
         # So each outer text gets inner for_each applied to it (as a single-element stream)
-        inst = TextPassList.model_validate(
-            {
-                "passes": [
-                    {
-                        "name": "for_each",
-                        "passes": [
-                            {
-                                "name": "for_each",
-                                "passes": [
-                                    {"name": "strip"},
-                                ],
-                            },
-                        ],
-                    },
-                ],
-            }
-        ).passes[0].build(".")
+        inst = (
+            TextPassList.model_validate(
+                {
+                    "passes": [
+                        {
+                            "name": "for_each",
+                            "passes": [
+                                {
+                                    "name": "for_each",
+                                    "passes": [
+                                        {"name": "strip"},
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                }
+            )
+            .passes[0]
+            .build(".")
+        )
         result = list(inst.process(["  a  ", "  b  ", "  c  "]))
         assert result == ["a", "b", "c"]
 
@@ -542,9 +687,7 @@ class TestFilterPass:
         return FilterPass.model_validate({**defaults, **kwargs}).build(".")
 
     def test_model_validation(self):
-        p = FilterPass.model_validate(
-            {"name": "filter", "pattern": r"foo"}
-        )
+        p = FilterPass.model_validate({"name": "filter", "pattern": r"foo"})
         assert p.name == "filter"
         assert p.pattern == "foo"
         assert p.invert is False
@@ -639,7 +782,12 @@ class TestReadFilePass:
 
     def test_model_validation_with_all_options(self):
         p = ReadFilePass.model_validate(
-            {"name": "read_file", "base": "./data", "encoding": "utf-16", "compression": "gzip"}
+            {
+                "name": "read_file",
+                "base": "./data",
+                "encoding": "utf-16",
+                "compression": "gzip",
+            }
         )
         assert p.base == "./data"
         assert p.encoding == "utf-16"
@@ -728,7 +876,9 @@ class TestReadFilePass:
         with gzip.open(path, "wt", encoding="utf-8") as f:
             f.write(content)
 
-        p = ReadFilePass(name="read_file", base=str(d), compression="gzip", encoding="utf-8")
+        p = ReadFilePass(
+            name="read_file", base=str(d), compression="gzip", encoding="utf-8"
+        )
         inst = p.build(".")
         result = list(inst.process(["file.txt.gz"]))
         assert result == [content]
@@ -745,7 +895,13 @@ class TestFindPass:
 
     def test_model_validation_with_patterns(self):
         p = FindPass.model_validate(
-            {"name": "find", "base": "./data", "paths": ["a", "b"], "file_pattern": r".*\.txt", "dir_pattern": r"sub"}
+            {
+                "name": "find",
+                "base": "./data",
+                "paths": ["a", "b"],
+                "file_pattern": r".*\.txt",
+                "dir_pattern": r"sub",
+            }
         )
         assert p.base == "./data"
         assert p.paths == ["a", "b"]
@@ -875,10 +1031,12 @@ class TestReferencePass:
         ref_file = tmp_path / "refs.json"
         ref_file.write_text(
             json.dumps(
-                {"passes": [
-                    {"name": "strip"},
-                    {"name": "split_lines"},
-                ]}
+                {
+                    "passes": [
+                        {"name": "strip"},
+                        {"name": "split_lines"},
+                    ]
+                }
             )
         )
 
@@ -888,7 +1046,9 @@ class TestReferencePass:
         assert result == ["a", "b"]
 
     def test_references_multiple_ref_files(self, tmp_path):
-        (tmp_path / "refs1.json").write_text(json.dumps({"passes": [{"name": "strip"}]}))
+        (tmp_path / "refs1.json").write_text(
+            json.dumps({"passes": [{"name": "strip"}]})
+        )
         (tmp_path / "refs2.json").write_text(
             json.dumps({"passes": [{"name": "join", "separator": ","}]})
         )
@@ -905,9 +1065,7 @@ class TestReferencePass:
         config.write_text("{}")
         refs_dir = tmp_path / "refs"
         refs_dir.mkdir()
-        (refs_dir / "ops.json").write_text(
-            json.dumps({"passes": [{"name": "strip"}]})
-        )
+        (refs_dir / "ops.json").write_text(json.dumps({"passes": [{"name": "strip"}]}))
 
         p = ReferencePass(name="ref", base="refs", paths=["ops.json"])
         inst = p.build(config)
@@ -992,9 +1150,7 @@ class TestTextPassList:
 
 class TestProcessTexts:
     def test_end_to_end_strip(self):
-        passes = TextPassList.model_validate(
-            {"passes": [{"name": "strip"}]}
-        ).passes
+        passes = TextPassList.model_validate({"passes": [{"name": "strip"}]}).passes
         result = list(process_texts(["  hello  ", "  world  "], passes))
         assert result == ["hello", "world"]
 
@@ -1018,9 +1174,7 @@ class TestProcessTexts:
         assert result == ["hello"]
 
     def test_empty_texts(self):
-        passes = TextPassList.model_validate(
-            {"passes": [{"name": "strip"}]}
-        ).passes
+        passes = TextPassList.model_validate({"passes": [{"name": "strip"}]}).passes
         result = list(process_texts([], passes))
         assert result == []
 
@@ -1042,7 +1196,12 @@ class TestProcessTexts:
         passes = TextPassList.model_validate(
             {
                 "passes": [
-                    {"name": "find", "base": "data", "paths": ["."], "file_pattern": r".*\.txt"},
+                    {
+                        "name": "find",
+                        "base": "data",
+                        "paths": ["."],
+                        "file_pattern": r".*\.txt",
+                    },
                     {"name": "read_file", "base": "data"},
                 ]
             }
@@ -1055,9 +1214,7 @@ class TestProcessTexts:
 class TestLoadTexts:
     def test_loads_and_processes(self, tmp_path):
         config = tmp_path / "pipeline.json"
-        config.write_text(
-            json.dumps({"passes": [{"name": "strip"}]})
-        )
+        config.write_text(json.dumps({"passes": [{"name": "strip"}]}))
         result = list(load_texts(config))
         assert result == []
 
@@ -1079,7 +1236,12 @@ class TestLoadTexts:
             json.dumps(
                 {
                     "passes": [
-                        {"name": "find", "base": "data", "paths": ["."], "file_pattern": r".*\.txt"},
+                        {
+                            "name": "find",
+                            "base": "data",
+                            "paths": ["."],
+                            "file_pattern": r".*\.txt",
+                        },
                         {"name": "read_file", "base": "data"},
                     ]
                 }
@@ -1107,11 +1269,18 @@ class TestIntegration:
         (d / "b.txt").write_text("  world  ")
 
         passes = TextPassList.model_validate(
-            {"passes": [
-                {"name": "find", "base": str(d), "paths": ["."], "file_pattern": r".*\.txt"},
-                {"name": "read_file", "base": str(d)},
-                {"name": "strip"},
-            ]}
+            {
+                "passes": [
+                    {
+                        "name": "find",
+                        "base": str(d),
+                        "paths": ["."],
+                        "file_pattern": r".*\.txt",
+                    },
+                    {"name": "read_file", "base": str(d)},
+                    {"name": "strip"},
+                ]
+            }
         ).passes
         result = list(process_texts([], passes, path="."))
         assert sorted(result) == ["hello", "world"]
@@ -1123,10 +1292,17 @@ class TestIntegration:
         (tmp_path / "B" / "b.txt").write_text("bbb")
 
         passes = TextPassList.model_validate(
-            {"passes": [
-                {"name": "find", "base": str(tmp_path), "paths": ["A", "B"], "file_pattern": r".*\.txt"},
-                {"name": "read_file", "base": str(tmp_path)},
-            ]}
+            {
+                "passes": [
+                    {
+                        "name": "find",
+                        "base": str(tmp_path),
+                        "paths": ["A", "B"],
+                        "file_pattern": r".*\.txt",
+                    },
+                    {"name": "read_file", "base": str(tmp_path)},
+                ]
+            }
         ).passes
         result = list(process_texts([], passes))
         assert sorted(result) == ["aaa", "bbb"]
@@ -1139,10 +1315,17 @@ class TestIntegration:
         ref_file = tmp_path / "ops.json"
         ref_file.write_text(
             json.dumps(
-                {"passes": [
-                    {"name": "find", "base": str(d), "paths": ["."], "file_pattern": r".*\.txt"},
-                    {"name": "read_file", "base": str(d)},
-                ]}
+                {
+                    "passes": [
+                        {
+                            "name": "find",
+                            "base": str(d),
+                            "paths": ["."],
+                            "file_pattern": r".*\.txt",
+                        },
+                        {"name": "read_file", "base": str(d)},
+                    ]
+                }
             )
         )
 
@@ -1155,16 +1338,18 @@ class TestIntegration:
     def test_for_each_split_strip_join_preserves_texts(self):
         """Per-line strip via for_each { split_lines + strip + join }, keeping text count."""
         passes = TextPassList.model_validate(
-            {"passes": [
-                {
-                    "name": "for_each",
-                    "passes": [
-                        {"name": "split_lines"},
-                        {"name": "strip"},
-                        {"name": "join", "separator": "\n"},
-                    ],
-                }
-            ]}
+            {
+                "passes": [
+                    {
+                        "name": "for_each",
+                        "passes": [
+                            {"name": "split_lines"},
+                            {"name": "strip"},
+                            {"name": "join", "separator": "\n"},
+                        ],
+                    }
+                ]
+            }
         ).passes
         result = list(process_texts(["  a  \n  b  ", "  c  \n  d  "], passes))
         assert result == ["a\nb", "c\nd"]
@@ -1177,18 +1362,25 @@ class TestIntegration:
         (d / "b.txt").write_text("  foo  \n  bar  ")
 
         passes = TextPassList.model_validate(
-            {"passes": [
-                {"name": "find", "base": str(d), "paths": ["."], "file_pattern": r".*\.txt"},
-                {"name": "read_file", "base": str(d)},
-                {
-                    "name": "for_each",
-                    "passes": [
-                        {"name": "split_lines"},
-                        {"name": "strip"},
-                        {"name": "join", "separator": "\n"},
-                    ],
-                },
-            ]}
+            {
+                "passes": [
+                    {
+                        "name": "find",
+                        "base": str(d),
+                        "paths": ["."],
+                        "file_pattern": r".*\.txt",
+                    },
+                    {"name": "read_file", "base": str(d)},
+                    {
+                        "name": "for_each",
+                        "passes": [
+                            {"name": "split_lines"},
+                            {"name": "strip"},
+                            {"name": "join", "separator": "\n"},
+                        ],
+                    },
+                ]
+            }
         ).passes
         result = list(process_texts([], passes, path="."))
         assert sorted(result) == ["foo\nbar", "hello\nworld"]
