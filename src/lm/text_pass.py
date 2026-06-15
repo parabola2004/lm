@@ -290,6 +290,36 @@ class SplitLinesPass(TextPassModel):
                 yield from text.splitlines(keepends=self.keep_ends)
 
 
+class SplitPass(TextPassModel):
+    """Split text by a separator or regex pattern."""
+
+    name: Literal["split"]
+    separator: str
+    regex: bool = False
+    maxsplit: int = 0
+
+    @override
+    def build(self, config_path):
+        pat = regex.compile(self.separator) if self.regex else None
+        return self._Instance(self.regex, pat, self.separator, self.maxsplit)
+
+    @dataclass
+    class _Instance(TextPassInstance):
+        regex: bool
+        pattern: Pattern | None
+        separator: str
+        maxsplit: int
+
+        @override
+        def process(self, texts):
+            for text in texts:
+                if self.regex and self.pattern:
+                    yield from regex.split(self.pattern, text, maxsplit=self.maxsplit)
+                else:
+                    ms = self.maxsplit if self.maxsplit > 0 else -1
+                    yield from text.split(self.separator, ms)
+
+
 class StripPass(TextPassModel):
     """Strip text (remove leading and trailing whitespace)."""
 
@@ -352,6 +382,7 @@ type TextPass = (
     | ReferencePass
     | ReplacePass
     | SplitLinesPass
+    | SplitPass
     | StripPass
 )
 type DiscriminatedTextPass = Annotated[TextPass, Discriminator("name")]

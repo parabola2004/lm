@@ -15,6 +15,7 @@ from lm.text_pass import (
     ReferencePass,
     ReplacePass,
     SplitLinesPass,
+    SplitPass,
     StripPass,
     TextPassList,
     _Chain,
@@ -98,6 +99,143 @@ class TestSplitLinesPass:
     def test_empty_input(self):
         inst = SplitLinesPass(name="split_lines").build(".")
         assert list(inst.process([])) == []
+
+
+class TestSplitPass:
+    @staticmethod
+    def _build(**kwargs) -> SplitPass._Instance:
+        defaults: dict = {"name": "split", "separator": ","}
+        return SplitPass.model_validate({**defaults, **kwargs}).build(".")
+
+    def test_model_validation(self):
+        p = SplitPass.model_validate({"name": "split", "separator": ","})
+        assert p.name == "split"
+        assert p.separator == ","
+        assert p.regex is False
+        assert p.maxsplit == 0
+
+    def test_model_validation_with_all_options(self):
+        p = SplitPass.model_validate(
+            {"name": "split", "separator": r"\s+", "regex": True, "maxsplit": 3}
+        )
+        assert p.separator == r"\s+"
+        assert p.regex is True
+        assert p.maxsplit == 3
+
+    # --- plain split (str.split) ---
+
+    def test_splits_single_text_by_comma(self):
+        inst = self._build(separator=",")
+        result = list(inst.process(["a,b,c"]))
+        assert result == ["a", "b", "c"]
+
+    def test_splits_multiple_texts(self):
+        inst = self._build(separator=",")
+        result = list(inst.process(["a,b", "c,d"]))
+        assert result == ["a", "b", "c", "d"]
+
+    def test_split_by_whitespace(self):
+        inst = self._build(separator=" ")
+        result = list(inst.process(["hello world foo"]))
+        assert result == ["hello", "world", "foo"]
+
+    def test_separator_not_found(self):
+        inst = self._build(separator=",")
+        result = list(inst.process(["no commas here"]))
+        assert result == ["no commas here"]
+
+    def test_multi_char_separator(self):
+        inst = self._build(separator="::")
+        result = list(inst.process(["a::b::c"]))
+        assert result == ["a", "b", "c"]
+
+    def test_empty_text_plain(self):
+        inst = self._build(separator=",")
+        result = list(inst.process([""]))
+        assert result == [""]
+
+    def test_empty_input(self):
+        inst = self._build(separator=",")
+        assert list(inst.process([])) == []
+
+    # --- regex split ---
+
+    def test_regex_split_by_whitespace(self):
+        inst = self._build(regex=True, separator=r"\s+")
+        result = list(inst.process(["a  b\tc"]))
+        assert result == ["a", "b", "c"]
+
+    def test_regex_split_multiple_delimiters(self):
+        inst = self._build(regex=True, separator=r"[,;]")
+        result = list(inst.process(["a,b;c"]))
+        assert result == ["a", "b", "c"]
+
+    def test_regex_split_with_capturing_group(self):
+        inst = self._build(regex=True, separator=r"(,)")
+        result = list(inst.process(["a,b,c"]))
+        assert result == ["a", ",", "b", ",", "c"]
+
+    def test_regex_split_no_match(self):
+        inst = self._build(regex=True, separator=r"\d+")
+        result = list(inst.process(["abc def"]))
+        assert result == ["abc def"]
+
+    def test_regex_split_empty_text(self):
+        inst = self._build(regex=True, separator=r",")
+        result = list(inst.process([""]))
+        assert result == [""]
+
+    # --- maxsplit ---
+
+    def test_maxsplit_plain(self):
+        inst = self._build(separator=",", maxsplit=2)
+        result = list(inst.process(["a,b,c,d,e"]))
+        assert result == ["a", "b", "c,d,e"]
+
+    def test_maxsplit_regex(self):
+        inst = self._build(regex=True, separator=r"\s+", maxsplit=2)
+        result = list(inst.process(["a b c d e"]))
+        assert result == ["a", "b", "c d e"]
+
+    def test_maxsplit_one(self):
+        inst = self._build(separator=",", maxsplit=1)
+        result = list(inst.process(["a,b,c"]))
+        assert result == ["a", "b,c"]
+
+    def test_maxsplit_zero_means_unlimited(self):
+        inst = self._build(separator=",", maxsplit=0)
+        result = list(inst.process(["a,b,c,d"]))
+        assert result == ["a", "b", "c", "d"]
+
+    # --- end-to-end via process_texts ---
+
+    def test_end_to_end_split(self):
+        passes = TextPassList.model_validate(
+            {"passes": [{"name": "split", "separator": ","}]}
+        ).passes
+        result = list(process_texts(["a,b,c"], passes))
+        assert result == ["a", "b", "c"]
+
+    def test_end_to_end_split_regex(self):
+        passes = TextPassList.model_validate(
+            {"passes": [{"name": "split", "regex": True, "separator": r"[,;]"}]}
+        ).passes
+        result = list(process_texts(["a,b;c"], passes))
+        assert result == ["a", "b", "c"]
+
+    # --- integration: split + strip + filter pattern ---
+
+    def test_split_strip_filter_pipeline(self):
+        """Split by double-newline, strip each piece, drop empties — article boundary pattern."""
+        passes = TextPassList.model_validate(
+            {"passes": [
+                {"name": "split", "regex": True, "separator": r"\n\n+"},
+                {"name": "strip"},
+                {"name": "filter", "pattern": r"^$", "invert": True},
+            ]}
+        ).passes
+        result = list(process_texts(["  = A = \n\n  text a  \n\n\n  = B = \n  text b  "], passes))
+        assert result == ["= A =", "text a", "= B = \n  text b"]
 
 
 class TestJoinPass:

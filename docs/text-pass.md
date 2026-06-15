@@ -26,6 +26,7 @@ Each pass is a generator: `Iterable[str]` → `Iterator[str]`. Some passes chang
 | `text`        | N → N+M        | Appends M literal strings        |
 | `strip`       | 1 → 1          | One output per input             |
 | `split_lines` | 1 → N          | One output per line              |
+| `split`       | 1 → N          | One output per segment           |
 | `join`        | N → 1          | All inputs merged to one         |
 | `replace`     | 1 → 1          | One output per input             |
 | `filter`      | 1 → 0 or 1     | Drops non-matching texts         |
@@ -126,6 +127,26 @@ Split each text by newlines. One text in, zero or more lines out.
 ```
 
 An empty string produces no output (Python's `str.splitlines()` returns `[]` for `""`).
+
+### `split` — Split by separator
+
+Split each text by a literal separator or regex pattern. One text in, zero or more segments out.
+
+| Param     | Type   | Default  | Description                                   |
+| --------- | ------ | -------- | --------------------------------------------- |
+| separator | `str`  | required | Separator string or regex pattern to split on |
+| regex     | `bool` | `false`  | Treat `separator` as a regex pattern          |
+| maxsplit  | `int`  | `0`      | Maximum number of splits; `0` means unlimited |
+
+```json
+{ "name": "split", "separator": "," }
+{ "name": "split", "regex": true, "separator": "\\s+" }
+{ "name": "split", "separator": "\\t", "maxsplit": 1 }
+```
+
+When `regex` is false, uses Python's `str.split` for fast literal splitting. When `regex` is true, uses `regex.split` — capturing groups in the pattern are included in the output.
+
+An empty string input produces a single empty string output (`"".split(",")` → `[""]`), unlike `split_lines`.
 
 ### `join` — Join texts
 

@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from tqdm import tqdm
 
 from lm.text_pass import load_texts
 
@@ -33,7 +34,7 @@ def main():
 
     with pq.ParquetWriter(output_path, schema, compression="zstd") as writer:
         batch: list[str] = []
-        for text in load_texts(args.config):
+        for text in tqdm(load_texts(args.config)):
             batch.append(text)
             if len(batch) >= WRITE_BATCH:
                 writer.write_table(pa.table({"text": batch}, schema=schema))
