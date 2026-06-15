@@ -6,8 +6,8 @@ readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
 dependencies = [
-    "datasets>=5.0.0",
     "numpy>=2.4.6",
+    "pyarrow>=24.0.0",
     "pydantic>=2.13.4",
     "regex>=2026.5.9",
     "tokenizers>=0.23.1",
@@ -49,7 +49,7 @@ members = ["."]
 dev = [
     "ipykernel>=7.3.0",
     "lm",
-    "pytest>=9.0.3",
+    "pytest>=9.1.0",
     "ruff>=0.15.16",
 ]
 

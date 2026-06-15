@@ -1,7 +1,9 @@
 from argparse import ArgumentParser
 from pathlib import Path
+from uuid import uuid4
 
-from datasets import Dataset
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from lm.text_pass import load_texts
 
@@ -9,7 +11,7 @@ from lm.text_pass import load_texts
 def main():
     parser = ArgumentParser(
         "Text Processing CLI Tool",
-        description="Load a text pass config and write results to file[s].",
+        description="Load a text pass config and write results to a Parquet file.",
     )
 
     parser.add_argument(
@@ -18,20 +20,28 @@ def main():
     )
     parser.add_argument(
         "output",
-        help="output dateset directory",
+        help="output Parquet file path",
     )
     args = parser.parse_args()
 
     output_path = Path(args.output)
+    schema = pa.schema([pa.field("text", pa.string())])
+    dataset_id = uuid4().hex
+    schema = schema.with_metadata({"dataset_id": dataset_id})
 
-    def gen():
+    WRITE_BATCH = 1000
+
+    with pq.ParquetWriter(output_path, schema, compression="zstd") as writer:
+        batch: list[str] = []
         for text in load_texts(args.config):
-            yield {"text": text}
+            batch.append(text)
+            if len(batch) >= WRITE_BATCH:
+                writer.write_table(pa.table({"text": batch}, schema=schema))
+                batch = []
+        if batch:
+            writer.write_table(pa.table({"text": batch}, schema=schema))
 
-    ds = Dataset.from_generator(gen)
-    ds.save_to_disk(output_path)
-
-    print(f"Dataset saved to {output_path.resolve()}")
+    print(f"Parquet saved to {output_path.resolve()}")
 
 
 if __name__ == "__main__":

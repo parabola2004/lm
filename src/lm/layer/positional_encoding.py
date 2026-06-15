@@ -34,9 +34,6 @@ class PositionalEncoding(nn.Module):
             (..., seq_len, dim)
         """
 
-        assert x.size(-1) == self.dim
-        assert x.size(-2) <= self.max_seq_len, "seq_len too large"
-
         seq_len = x.size(-2)
         x += self.pe[:seq_len, :]
 

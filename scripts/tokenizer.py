@@ -1,23 +1,17 @@
 from argparse import ArgumentParser
+from uuid import uuid4
 
-from datasets import Dataset, load_from_disk
-from tokenizers import Tokenizer
-from tokenizers.models import BPE
-from tokenizers.normalizers import NFD
-from tokenizers.pre_tokenizers import ByteLevel
+import pyarrow as pa
+import pyarrow.parquet as pq
+from tokenizers import Tokenizer, decoders, models, pre_tokenizers
 from tokenizers.trainers import BpeTrainer
+from tqdm import tqdm
 
 
 def action_info(path: str):
     tokenizer = Tokenizer.from_file(path)
     print(f"Model:      {type(tokenizer.model).__name__}")
     print(f"Vocab size: {tokenizer.get_vocab_size()}")
-    print(
-        f"Pre-tok:    {type(tokenizer.pre_tokenizer).__name__ if tokenizer.pre_tokenizer else 'None'}"
-    )
-    print(
-        f"Decoder:    {type(tokenizer.decoder).__name__ if tokenizer.decoder else 'None'}"
-    )
     special_tokens = [
         t for t in tokenizer.get_added_tokens_decoder().values() if t.special
     ]
@@ -26,38 +20,49 @@ def action_info(path: str):
 
 
 def action_init(path: str):
-    tokenizer = Tokenizer(BPE(unk_token="<unk>"))
-    tokenizer.normalizer = NFD()
-    tokenizer.pre_tokenizer = ByteLevel()
+    tokenizer = Tokenizer(models.BPE(unk_token="<unk>"))
+    tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel()
+    tokenizer.decoder = decoders.ByteLevel()
     tokenizer.save(path, pretty=True)
-    print(f"Initialized tokenizer at {path}.")
+    print(f'Initialized tokenizer at "{path}".')
 
 
 def action_train(path: str, texts_path: str, vocab_size: int):
     tokenizer = Tokenizer.from_file(path)
     trainer = BpeTrainer(
-        vocab_size=vocab_size, special_tokens=["<unk>", "<pad>", "<sot>", "<eot>"]
+        vocab_size=vocab_size,
+        special_tokens=["<unk>", "<pad>", "<eot>"]
+        + [f"<placeholder{i}>" for i in range(3, 16)],
     )
-    ds = load_from_disk(texts_path)
-    tokenizer.train_from_iterator((sample["text"] for sample in ds), trainer)
+    pf = pq.ParquetFile(texts_path)
+
+    def text_iter():
+        for batch in pf.iter_batches():
+            for text in batch.column("text").to_pylist():
+                yield text
+
+    tokenizer.train_from_iterator(text_iter(), trainer)
     tokenizer.save(path, pretty=True)
-    print(f"Saved tokenizer at {path}.")
+    print(f'Saved tokenizer at "{path}".')
 
 
 def action_encode(path: str, texts_path: str, output: str, batch_size: int = 1):
     tokenizer = Tokenizer.from_file(path)
-    ds_texts = load_from_disk(texts_path)
+    pf = pq.ParquetFile(texts_path)
 
-    def gen():
-        for i in range(0, len(ds_texts), batch_size):
-            batch = ds_texts[i : i + batch_size]["text"]
-            encoded = tokenizer.encode_batch_fast(batch)
-            for x in encoded:
-                yield {"tokens": x.ids}
+    schema = pa.schema([pa.field("tokens", pa.list_(pa.uint32()))])
+    dataset_id = uuid4().hex
+    schema = schema.with_metadata({"dataset_id": dataset_id})
 
-    ds_ids = Dataset.from_generator(gen)
-    ds_ids.save_to_disk(output)
-    print(f"Saved encoded dataset to {output}.")
+    with pq.ParquetWriter(output, schema, compression="zstd") as writer:
+        for batch in tqdm(pf.iter_batches(batch_size=batch_size), desc="batches"):
+            texts = batch.column("text").to_pylist()
+            encoded = tokenizer.encode_batch_fast(texts)
+            writer.write_table(
+                pa.table({"tokens": [x.ids for x in encoded]}, schema=schema)
+            )
+
+    print(f'Saved encoded Parquet to "{output}".')
 
 
 def action_demo(path: str, text: str, *, show_id: bool = False):
@@ -85,7 +90,7 @@ def create_parser() -> ArgumentParser:
     # train
     train_parser = subparsers.add_parser("train", help="train tokenizer")
     train_parser.add_argument("path", help="tokenizer JSON file")
-    train_parser.add_argument("texts_path", help="path to dataset directory")
+    train_parser.add_argument("texts_path", help="path to Parquet file")
     train_parser.add_argument("vocab_size", type=int, help="vocabulary size")
 
     # encode
@@ -93,8 +98,8 @@ def create_parser() -> ArgumentParser:
         "encode", help="encode dataset texts to tokens"
     )
     encode_parser.add_argument("path", help="tokenizer JSON file")
-    encode_parser.add_argument("texts_path", help="path to dataset directory")
-    encode_parser.add_argument("output", help="output directory for encoded dataset")
+    encode_parser.add_argument("texts_path", help="path to Parquet file")
+    encode_parser.add_argument("output", help="output Parquet file path")
     encode_parser.add_argument(
         "--batch-size",
         "-bs",
